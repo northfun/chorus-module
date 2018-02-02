@@ -97,16 +97,26 @@ func NewDefaultListener(logger *zap.Logger, protocol string, lAddr string, skipU
 
 	// Determine external address...
 	var extAddr *NetAddress
-	if !skipUPNP {
-		// If the lAddrIP is INADDR_ANY, try UPnP
-		if lAddrIP == "" || lAddrIP == "0.0.0.0" {
-			extAddr = getUPNPExternalAddress(logger, lAddrPort, listenerPort)
+	if lAddrIP != "" && lAddrIP != "0.0.0.0" && lAddrIP != "127.0.0.1" {
+		// Prefer address from config
+		extAddr = intAddr
+	} else if !skipUPNP {
+		// Then prefer UPnP
+		extAddr = getUPNPExternalAddress(logger, lAddrPort, listenerPort)
+	} else {
+		// At last we determine it from system network config
+		nAddrs := getNaiveExternalAddress(listenerPort)
+		for _, v := range nAddrs {
+			if isPublicIP(v.IP) {
+				extAddr = v
+				break
+			}
+		}
+		if extAddr == nil && len(nAddrs) > 0 {
+			extAddr = nAddrs[0]
 		}
 	}
-	// Otherwise just use the local address...
-	if extAddr == nil {
-		extAddr = getNaiveExternalAddress(listenerPort)
-	}
+
 	if extAddr == nil {
 		logger.Error("Could not determine external address!")
 		return nil, fmt.Errorf("could not determine external address")
@@ -123,6 +133,25 @@ func NewDefaultListener(logger *zap.Logger, protocol string, lAddr string, skipU
 	dl.BaseService = *NewBaseService(logger, "DefaultListener", dl)
 	dl.Start() // Started upon construction
 	return dl, nil
+}
+
+func isPublicIP(IP net.IP) bool {
+	if IP.IsLoopback() || IP.IsLinkLocalMulticast() || IP.IsLinkLocalUnicast() {
+		return false
+	}
+	if ip4 := IP.To4(); ip4 != nil {
+		switch true {
+		case ip4[0] == 10:
+			return false
+		case ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31:
+			return false
+		case ip4[0] == 192 && ip4[1] == 168:
+			return false
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func (l *DefaultListener) OnStart() error {
@@ -218,12 +247,13 @@ func getUPNPExternalAddress(logger *zap.Logger, externalPort, internalPort int) 
 }
 
 // TODO: use syscalls: http://pastebin.com/9exZG4rh
-func getNaiveExternalAddress(port int) *NetAddress {
+func getNaiveExternalAddress(port int) []*NetAddress {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		PanicCrisis(Fmt("Could not fetch interface addresses: %v", err))
 	}
 
+	naddrs := make([]*NetAddress, 0)
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
 		if !ok {
@@ -233,7 +263,7 @@ func getNaiveExternalAddress(port int) *NetAddress {
 		if v4 == nil || v4[0] == 127 {
 			continue
 		} // loopback
-		return NewNetAddressIPPort(ipnet.IP, uint16(port))
+		naddrs = append(naddrs, NewNetAddressIPPort(ipnet.IP, uint16(port)))
 	}
-	return nil
+	return naddrs
 }

@@ -16,12 +16,38 @@ package p2p
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+var logger *zap.Logger
+
+type (
+	infoWithDebug struct{}
+)
+
+func (l infoWithDebug) Enabled(lv zapcore.Level) bool {
+	return lv == zapcore.InfoLevel || lv == zapcore.DebugLevel
+}
+
+func init() {
+	encoderCfg := zap.NewProductionEncoderConfig()
+	zcore := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderCfg),
+		zapcore.NewMultiWriteSyncer(os.Stdout),
+		infoWithDebug{},
+	)
+
+	logger = zap.New(zcore)
+}
 
 func TestListener(t *testing.T) {
 	// Create a listener
-	l := NewDefaultListener("tcp", ":8001", true)
+	l, err := NewDefaultListener(logger, "tcp", ":8001", true)
 
 	// Dial the listener
 	lAddr := l.ExternalAddress()
@@ -51,4 +77,28 @@ func TestListener(t *testing.T) {
 
 	// Close the server, no longer needed.
 	l.Stop()
+}
+
+func TestNewDefaultListener(t *testing.T) {
+	l, err := NewDefaultListener(logger, "tcp", ":8001", true)
+	panicErr(err)
+	fmt.Println("For [:8001] :", l.ExternalAddress().String())
+
+	l, err = NewDefaultListener(logger, "tcp", "0.0.0.0:9001", true)
+	panicErr(err)
+	fmt.Println("For [0.0.0.0:9001] :", l.ExternalAddress().String())
+
+	l, err = NewDefaultListener(logger, "tcp", "192.168.27.116:7001", true)
+	panicErr(err)
+	fmt.Println("For [192.168.27.116:7001] :", l.ExternalAddress().String())
+
+	l, err = NewDefaultListener(logger, "tcp", "172.16.7.162:5001", true)
+	panicErr(err)
+	fmt.Println("For [172.16.7.162:5001] :", l.ExternalAddress().String())
+}
+
+func panicErr(err error) {
+	if err != nil {
+		panic(err)
+	}
 }

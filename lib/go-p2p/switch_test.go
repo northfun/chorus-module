@@ -24,7 +24,6 @@ import (
 
 	"github.com/spf13/viper"
 
-	. "github.com/Baptist-Publication/chorus-module/lib/go-common"
 	"github.com/Baptist-Publication/chorus-module/lib/go-crypto"
 	"github.com/Baptist-Publication/chorus-module/lib/go-wire"
 )
@@ -63,7 +62,7 @@ func NewTestReactor(channels []*ChannelDescriptor, logMessages bool) *TestReacto
 		logMessages:  logMessages,
 		msgsReceived: make(map[byte][]PeerMessage),
 	}
-	tr.BaseReactor = *NewBaseReactor(log, "TestReactor", tr)
+	tr.BaseReactor = *NewBaseReactor(logger, "TestReactor", tr)
 	return tr
 }
 
@@ -105,7 +104,7 @@ func (tr *TestReactor) getMsgs(chID byte) []PeerMessage {
 // XXX: note this uses net.Pipe and not a proper TCP conn
 func makeSwitchPair(t testing.TB, initSwitch func(int, *Switch) *Switch) (*Switch, *Switch) {
 	// Create two switches that will be interconnected.
-	switches := MakeConnectedSwitches(2, initSwitch, Connect2Switches)
+	switches := MakeConnectedSwitches(logger, nil, 2, initSwitch, Connect2Switches)
 	return switches[0], switches[1]
 }
 
@@ -176,8 +175,8 @@ func TestSwitches(t *testing.T) {
 }
 
 func TestConnAddrFilter(t *testing.T) {
-	s1 := makeSwitch(1, "testing", "123.123.123", initSwitchFunc)
-	s2 := makeSwitch(1, "testing", "123.123.123", initSwitchFunc)
+	s1 := makeSwitch(logger, nil, 1, "testing", "123.123.123", initSwitchFunc)
+	s2 := makeSwitch(logger, nil, 1, "testing", "123.123.123", initSwitchFunc)
 
 	c1, c2 := net.Pipe()
 
@@ -206,13 +205,13 @@ func TestConnAddrFilter(t *testing.T) {
 }
 
 func TestConnPubKeyFilter(t *testing.T) {
-	s1 := makeSwitch(1, "testing", "123.123.123", initSwitchFunc)
-	s2 := makeSwitch(1, "testing", "123.123.123", initSwitchFunc)
+	s1 := makeSwitch(logger, nil, 1, "testing", "123.123.123", initSwitchFunc)
+	s2 := makeSwitch(logger, nil, 1, "testing", "123.123.123", initSwitchFunc)
 
 	c1, c2 := net.Pipe()
 
 	// set pubkey filter
-	s1.SetPubKeyFilter(func(pubkey crypto.PubKeyEd25519) error {
+	s1.SetPubKeyFilter(func(pubkey *crypto.PubKeyEd25519) error {
 		if bytes.Equal(pubkey.Bytes(), s2.nodeInfo.PubKey.Bytes()) {
 			return fmt.Errorf("Error: pipe is blacklisted")
 		}
@@ -274,7 +273,7 @@ func BenchmarkSwitches(b *testing.B) {
 		}
 	}
 
-	log.Warn(Fmt("success: %v, failure: %v", numSuccess, numFailure))
+	fmt.Printf("success: %v, failure: %v\n", numSuccess, numFailure)
 
 	// Allow everything to flush before stopping switches & closing connections.
 	b.StopTimer()
