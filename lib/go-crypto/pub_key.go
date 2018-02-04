@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"strings"
 
-	secp256k1 "github.com/btcsuite/btcd/btcec"
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519"
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519/extra25519"
 	. "github.com/Baptist-Publication/chorus-module/lib/go-common"
-	"github.com/Baptist-Publication/chorus-module/lib/go-wire"
+	"github.com/Baptist-Publication/chorus-module/xlib"
+	secp256k1 "github.com/btcsuite/btcd/btcec"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -85,24 +85,24 @@ type PubKey interface {
 
 // Types of PubKey implementations
 const (
-	PubKeyTypeEd25519    = byte(0x01)
-	PubKeyTypeSecp256k1  = byte(0x02)
-	PPubKeyTypeEd25519   = byte(0x03)
-	PPubKeyTypeSecp256k1 = byte(0x04)
+	PubKeyTypeEd25519   = byte(0x01)
+	PubKeyTypeSecp256k1 = byte(0x02)
 )
 
-// for wire.readReflect
-var _ = wire.RegisterInterface(
-	struct{ PubKey }{},
-	wire.ConcreteType{PubKeyEd25519{}, PubKeyTypeEd25519},
-	wire.ConcreteType{PubKeySecp256k1{}, PubKeyTypeSecp256k1},
-	wire.ConcreteType{&PubKeyEd25519{}, PPubKeyTypeEd25519},
-	wire.ConcreteType{&PubKeySecp256k1{}, PPubKeyTypeSecp256k1},
-)
-
-func PubKeyFromBytes(pubKeyBytes []byte) (pubKey PubKey, err error) {
-	err = wire.ReadBinaryBytes(pubKeyBytes, &pubKey)
-	return
+func PubKeyFromBytes(tp byte, pubKeyBytes []byte) (pubKey PubKey, err error) {
+	switch tp {
+	case PubKeyTypeEd25519:
+		pub := [32]byte{}
+		copy(pub[:], pubKeyBytes)
+		pk := PubKeyEd25519(pub)
+		return &pk, nil
+	case PubKeyTypeSecp256k1:
+		pub := [64]byte{}
+		copy(pub[:], pubKeyBytes)
+		pk := PubKeySecp256k1(pub)
+		return &pk, nil
+	}
+	return nil, errors.New("undefined pubkey type")
 }
 
 //-------------------------------------
@@ -111,10 +111,10 @@ func PubKeyFromBytes(pubKeyBytes []byte) (pubKey PubKey, err error) {
 type PubKeyEd25519 [32]byte
 
 func (pubKey *PubKeyEd25519) Address() []byte {
-	w, n, err := new(bytes.Buffer), new(int), new(error)
-	wire.WriteBinary((*pubKey)[:], w, n, err)
-	if *err != nil {
-		PanicCrisis(*err)
+	var w bytes.Buffer
+	err := xlib.WriteBytes(&w, (*pubKey)[:])
+	if err != nil {
+		PanicCrisis(err)
 	}
 	// append type byte
 	encodedPubkey := append([]byte{PubKeyTypeEd25519}, w.Bytes()...)
@@ -205,10 +205,10 @@ func (pubKey *PubKeyEd25519) UnmarshalJSON(data []byte) error {
 type PubKeySecp256k1 [64]byte
 
 func (pubKey *PubKeySecp256k1) Address() []byte {
-	w, n, err := new(bytes.Buffer), new(int), new(error)
-	wire.WriteBinary((*pubKey)[:], w, n, err)
-	if *err != nil {
-		PanicCrisis(*err)
+	var w bytes.Buffer
+	err := xlib.WriteBytes(&w, (*pubKey)[:])
+	if err != nil {
+		PanicCrisis(err)
 	}
 	// append type byte
 	encodedPubkey := append([]byte{PubKeyTypeSecp256k1}, w.Bytes()...)
