@@ -15,7 +15,6 @@
 package xlib
 
 import (
-	"bytes"
 	"encoding/binary"
 	"io"
 	"os"
@@ -32,15 +31,15 @@ func CheckItfcNil(itfc interface{}) bool {
 }
 
 func BinRead(reader io.Reader, data interface{}) error {
-	return binary.Read(reader, binary.LittleEndian, data)
+	return binary.Read(reader, binary.BigEndian, data)
 }
 
 func BinWrite(writer io.Writer, data interface{}) error {
-	return binary.Write(writer, binary.LittleEndian, data)
+	return binary.Write(writer, binary.BigEndian, data)
 }
 
 func ReadBytes(reader io.Reader) ([]byte, error) {
-	byLen, err := IntFrom4Bytes(reader)
+	byLen, err := ReadVarint(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -50,27 +49,11 @@ func ReadBytes(reader io.Reader) ([]byte, error) {
 }
 
 func WriteBytes(writer io.Writer, bys []byte) error {
-	err := BinWrite(writer, uint32(len(bys)))
+	err := WriteVarint(writer, len(bys))
 	if err != nil {
 		return err
 	}
 	return BinWrite(writer, bys)
-}
-
-func IntFrom4Bytes(reader io.Reader) (int, error) {
-	var num uint32
-	if err := BinRead(reader, &num); err != nil {
-		return 0, err
-	}
-	return int(num), nil
-}
-
-func IntTo4Bytes(num int) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := BinWrite(&buf, uint32(num)); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 func PathExists(path string) (bool, error) {

@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	. "github.com/Baptist-Publication/chorus-module/lib/go-common"
-	"github.com/Baptist-Publication/chorus-module/lib/go-wire"
 )
 
 type StSignature struct {
@@ -85,18 +84,18 @@ const (
 	PSignatureTypeSecp256k1 = byte(0x04)
 )
 
-// for wire.readReflect
-var _ = wire.RegisterInterface(
-	struct{ Signature }{},
-	wire.ConcreteType{SignatureEd25519{}, SignatureTypeEd25519},
-	wire.ConcreteType{SignatureSecp256k1{}, SignatureTypeSecp256k1},
-	wire.ConcreteType{&SignatureEd25519{}, PSignatureTypeEd25519},
-	wire.ConcreteType{&SignatureSecp256k1{}, PSignatureTypeSecp256k1},
-)
-
-func SignatureFromBytes(sigBytes []byte) (sig Signature, err error) {
-	err = wire.ReadBinaryBytes(sigBytes, &sig)
-	return
+func SignatureFromBytes(tp byte, sigBytes []byte) (sig Signature, err error) {
+	switch tp {
+	case SignatureTypeEd25519:
+		sigt := [64]byte{}
+		copy(sigt[:], sigBytes)
+		sigarr := SignatureEd25519(sigt)
+		return &sigarr, nil
+	case SignatureTypeSecp256k1:
+		sigt := SignatureSecp256k1(sigBytes)
+		return &sigt, nil
+	}
+	return nil, errors.New("undefined signature type")
 }
 
 //-------------------------------------
@@ -105,7 +104,6 @@ func SignatureFromBytes(sigBytes []byte) (sig Signature, err error) {
 type SignatureEd25519 [64]byte
 
 func (sig *SignatureEd25519) Bytes() []byte {
-	//	return wire.BinaryBytes(struct{ Signature }{sig})
 	return (*sig)[:]
 }
 
@@ -174,7 +172,7 @@ func (sig *SignatureSecp256k1) Bytes() []byte {
 	if sig == nil {
 		return nil
 	}
-	return wire.BinaryBytes(struct{ Signature }{sig})
+	return *sig
 }
 
 func (sig *SignatureSecp256k1) IsZero() bool { return sig == nil || len(*sig) == 0 }

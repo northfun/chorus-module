@@ -306,12 +306,11 @@ func shareAuthSignature(sc *SecretConnection, pubKey *crypto.PubKeyEd25519, sign
 			var buf bytes.Buffer
 			sgm := &authSigMessage{pubKey, signature}
 			sgm.writeBytes(&buf)
-			//fmt.Println("======", len(buf.Bytes()))
 			bys := buf.Bytes()
 			_, err1 = sc.Write(bys)
 		},
 		func() {
-			readBuffer := make([]byte, 104)
+			readBuffer := make([]byte, 100)
 			_, err2 = io.ReadFull(sc, readBuffer)
 			err2 = recvMsg.readBytes(bytes.NewReader(readBuffer))
 		})
