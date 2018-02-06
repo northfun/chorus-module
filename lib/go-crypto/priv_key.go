@@ -21,11 +21,10 @@ import (
 	"errors"
 	"strings"
 
-	secp256k1 "github.com/btcsuite/btcd/btcec"
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519"
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519/extra25519"
 	. "github.com/Baptist-Publication/chorus-module/lib/go-common"
-	"github.com/Baptist-Publication/chorus-module/lib/go-wire"
+	secp256k1 "github.com/btcsuite/btcd/btcec"
 )
 
 type StPrivKey struct {
@@ -87,25 +86,13 @@ const (
 	PrivKeyTypeSecp256k1 = byte(0x02)
 )
 
-// for wire.readReflect
-var _ = wire.RegisterInterface(
-	struct{ PrivKey }{},
-	wire.ConcreteType{PrivKeyEd25519{}, PrivKeyTypeEd25519},
-	wire.ConcreteType{PrivKeySecp256k1{}, PrivKeyTypeSecp256k1},
-)
-
-func PrivKeyFromBytes(privKeyBytes []byte) (privKey PrivKey, err error) {
-	err = wire.ReadBinaryBytes(privKeyBytes, &privKey)
-	return
-}
-
 //-------------------------------------
 
 // Implements PrivKey
 type PrivKeyEd25519 [64]byte
 
 func (privKey *PrivKeyEd25519) Bytes() []byte {
-	return wire.BinaryBytes(struct{ PrivKey }{privKey})
+	return (*privKey)[:]
 }
 
 func (privKey *PrivKeyEd25519) Sign(msg []byte) Signature {
@@ -142,17 +129,6 @@ func (privKey *PrivKeyEd25519) ToCurve25519() *[32]byte {
 
 func (privKey *PrivKeyEd25519) String() string {
 	return Fmt("PrivKeyEd25519{*****}")
-}
-
-// Deterministically generates new priv-key bytes from key.
-func (privKey *PrivKeyEd25519) Generate(index int) PrivKeyEd25519 {
-	newBytes := wire.BinarySha256(struct {
-		PrivKey [64]byte
-		Index   int
-	}{(*privKey), index})
-	var newKey [64]byte
-	copy(newKey[:], newBytes)
-	return PrivKeyEd25519(newKey)
 }
 
 func (privKey *PrivKeyEd25519) MarshalJSON() ([]byte, error) {
@@ -208,7 +184,7 @@ func GenPrivKeyEd25519FromSecret(secret []byte) PrivKeyEd25519 {
 type PrivKeySecp256k1 [32]byte
 
 func (privKey *PrivKeySecp256k1) Bytes() []byte {
-	return wire.BinaryBytes(struct{ PrivKey }{privKey})
+	return (*privKey)[:]
 }
 
 func (privKey *PrivKeySecp256k1) Sign(msg []byte) Signature {
@@ -273,19 +249,6 @@ func (privKey *PrivKeySecp256k1) UnmarshalJSON(data []byte) error {
 	copy((*privKey)[:32], bytes[:32])
 	return nil
 }
-
-/*
-// Deterministically generates new priv-key bytes from key.
-func (key PrivKeySecp256k1) Generate(index int) PrivKeySecp256k1 {
-	newBytes := wire.BinarySha256(struct {
-		PrivKey [64]byte
-		Index   int
-	}{key, index})
-	var newKey [64]byte
-	copy(newKey[:], newBytes)
-	return PrivKeySecp256k1(newKey)
-}
-*/
 
 func GenPrivKeySecp256k1() PrivKeySecp256k1 {
 	privKeyBytes := [32]byte{}
