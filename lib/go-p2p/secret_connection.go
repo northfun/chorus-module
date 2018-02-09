@@ -46,7 +46,7 @@ type SecretConnection struct {
 // Returns nil if error in handshake.
 // Caller should call conn.Close()
 // See docs/sts-final.pdf for more information.
-func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKeyEd25519) (*SecretConnection, error) {
+func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey *crypto.PrivKeyEd25519) (*SecretConnection, error) {
 
 	locPubKey := locPrivKey.PubKey().(*crypto.PubKeyEd25519)
 
@@ -254,7 +254,7 @@ func genChallenge(loPubKey, hiPubKey *[32]byte) (challenge *[32]byte) {
 	return hash32(append(loPubKey[:], hiPubKey[:]...))
 }
 
-func signChallenge(challenge *[32]byte, locPrivKey crypto.PrivKeyEd25519) (signature crypto.SignatureEd25519) {
+func signChallenge(challenge *[32]byte, locPrivKey *crypto.PrivKeyEd25519) (signature crypto.SignatureEd25519) {
 	signature = *(locPrivKey.Sign(challenge[:]).(*crypto.SignatureEd25519))
 	return signature
 }

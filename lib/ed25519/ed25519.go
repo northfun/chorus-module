@@ -52,7 +52,11 @@ func MakePublicKey(privateKey *[PrivateKeySize]byte) (publicKey *[PublicKeySize]
 	copy(hBytes[:], digest)
 	edwards25519.GeScalarMultBase(&A, &hBytes)
 	A.ToBytes(publicKey)
+	return
+}
 
+func GenPublicKey(privateKey *[PrivateKeySize]byte) (publicKey *[PublicKeySize]byte) {
+	publicKey = MakePublicKey(privateKey)
 	copy(privateKey[32:], publicKey[:])
 	return
 }

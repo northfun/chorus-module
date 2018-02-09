@@ -91,8 +91,8 @@ type Switch struct {
 	reactorsByCh map[byte]Reactor
 	peers        *PeerSet
 	dialing      *CMap
-	nodeInfo     *NodeInfo             // our node info
-	nodePrivKey  crypto.PrivKeyEd25519 // our node privkey
+	nodeInfo     *NodeInfo              // our node info
+	nodePrivKey  *crypto.PrivKeyEd25519 // our node privkey
 
 	filterConnByAddr       func(net.Addr) error
 	filterConnByPubKey     FilterFunc
@@ -188,7 +188,7 @@ func (sw *Switch) NodeInfo() *NodeInfo {
 	return sw.nodeInfo
 }
 
-func (sw *Switch) NodePrivkey() crypto.PrivKeyEd25519 {
+func (sw *Switch) NodePrivkey() *crypto.PrivKeyEd25519 {
 	return sw.nodePrivKey
 }
 
@@ -202,7 +202,7 @@ func (sw *Switch) SetPeerErrorReporter(reporter IPeerErrorReporter) {
 
 // Not goroutine safe.
 // NOTE: Overwrites sw.nodeInfo.PubKey
-func (sw *Switch) SetNodePrivKey(nodePrivKey crypto.PrivKeyEd25519) {
+func (sw *Switch) SetNodePrivKey(nodePrivKey *crypto.PrivKeyEd25519) {
 	sw.nodePrivKey = nodePrivKey
 	if sw.nodeInfo != nil {
 		sw.nodeInfo.PubKey = *(nodePrivKey.PubKey().(*crypto.PubKeyEd25519))
@@ -742,7 +742,13 @@ func StartSwitches(switches []*Switch) error {
 }
 
 func makeSwitch(logger *zap.Logger, cfg *viper.Viper, i int, network, version string, initSwitch func(int, *Switch) *Switch) *Switch {
-	privKey := crypto.GenPrivKeyEd25519()
+	privKey, err := crypto.GenPrivKeyEd25519(nil)
+	if err != nil {
+		if logger != nil {
+			logger.Error("gen privkeyed25519 err", zap.Error(err))
+		}
+		return nil
+	}
 	// new switch, add reactors
 	// TODO: let the config be passed in?
 	s := initSwitch(i, NewSwitch(logger, cfg, []byte{}))

@@ -20,10 +20,13 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unsafe"
 
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519"
 	"github.com/Baptist-Publication/chorus-module/lib/ed25519/extra25519"
 	. "github.com/Baptist-Publication/chorus-module/lib/go-common"
+	libcrypto "github.com/Baptist-Publication/chorus-module/xlib/crypto"
+	"github.com/awnumar/memguard"
 	secp256k1 "github.com/btcsuite/btcd/btcec"
 )
 
@@ -70,12 +73,12 @@ func (p *StPrivKey) String() string {
 
 // PrivKey is part of PrivAccount and state.PrivValidator.
 type PrivKey interface {
-	Bytes() []byte
 	Sign(msg []byte) Signature
+	Decrypt(pwd []byte) error
 	PubKey() PubKey
 	Equals(PrivKey) bool
-	KeyString() string
 	String() string
+	Destroy()
 	json.Marshaler
 	json.Unmarshaler
 }
@@ -88,42 +91,109 @@ const (
 
 //-------------------------------------
 
+type PrivKeyEd25519Arr = [64]byte
+
 // Implements PrivKey
-type PrivKeyEd25519 [64]byte
+type PrivKeyEd25519 struct {
+	//[64]byte
+	encrypted []byte
+	mg        *memguard.LockedBuffer
+}
+
+func (privKey *PrivKeyEd25519) InitAndEncrypt(pkArr *PrivKeyEd25519Arr, pwd []byte) error {
+	var err error
+	if len(pwd) != 0 {
+		privKey.encrypted, err = libcrypto.Encrypt((*pkArr)[:], pwd)
+		libcrypto.WipeBytes(pwd)
+		if err != nil {
+			return err
+		}
+	} else {
+		privKey.encrypted = []byte{}
+	}
+	// pkBytes will be wiped by memguard
+	if privKey.mg != nil && !privKey.mg.IsDestroyed() {
+		privKey.mg.Destroy()
+	}
+	privKey.mg, err = memguard.NewImmutableFromBytes((*pkArr)[:])
+	return err
+}
+
+func (privKey *PrivKeyEd25519) ChangePwd(pwd []byte) error {
+	pkArr := privKey.arrayPtr()
+	var newPkArr PrivKeyEd25519Arr
+	copy(newPkArr[:], (*pkArr)[:])
+	return privKey.InitAndEncrypt(&newPkArr, pwd)
+}
+
+func (privKey *PrivKeyEd25519) InitAndDecrypt(encrypted []byte, pwd []byte) error {
+	if len(encrypted) == 0 {
+		return errors.New("ciphertext is nil")
+	}
+	privKey.encrypted = encrypted
+	return privKey.Decrypt(pwd)
+}
+
+func (privKey *PrivKeyEd25519) Decrypt(pwd []byte) error {
+	var privArr PrivKeyEd25519Arr
+	if len(pwd) != 0 {
+		pkBytes, err := libcrypto.Decrypt(privKey.encrypted, pwd)
+		if err != nil {
+			return err
+		}
+		copy(privArr[:], pkBytes)
+	} else {
+		if len(privKey.encrypted) != 64 {
+			return errors.New("missing password")
+		}
+		copy(privArr[:], privKey.encrypted)
+		privKey.encrypted = []byte{}
+	}
+	var err error
+	// pkBytes will be wiped by memguard
+	privKey.mg, err = memguard.NewImmutableFromBytes(privArr[:])
+	libcrypto.WipeBytes(pwd)
+	return err
+}
+
+func (privKey *PrivKeyEd25519) KeyBytes() []byte {
+	arrPtr := privKey.arrayPtr()
+	return (*arrPtr)[:]
+}
 
 func (privKey *PrivKeyEd25519) Bytes() []byte {
-	return (*privKey)[:]
+	return privKey.encrypted
+}
+
+// if init PrivKeyEd25519 in a wrong way,here would call a panic
+func (privKey *PrivKeyEd25519) arrayPtr() *PrivKeyEd25519Arr {
+	arr := (*PrivKeyEd25519Arr)(unsafe.Pointer(&privKey.mg.Buffer()[0]))
+	return arr
 }
 
 func (privKey *PrivKeyEd25519) Sign(msg []byte) Signature {
-	privKeyBytes := [64]byte(*privKey)
-	signatureBytes := ed25519.Sign(&privKeyBytes, msg)
+	signatureBytes := ed25519.Sign(privKey.arrayPtr(), msg)
 	bys := SignatureEd25519(*signatureBytes)
 	return &bys
 }
 
 func (privKey *PrivKeyEd25519) PubKey() PubKey {
-	privKeyBytes := [64]byte(*privKey)
-	pubkey := PubKeyEd25519(*ed25519.MakePublicKey(&privKeyBytes))
+	pubkey := PubKeyEd25519(*ed25519.MakePublicKey(privKey.arrayPtr()))
 	return &pubkey
 }
 
 func (privKey *PrivKeyEd25519) Equals(other PrivKey) bool {
+	keyArrayPtr := privKey.arrayPtr()
 	if otherEd, ok := other.(*PrivKeyEd25519); ok {
-		return bytes.Equal((*privKey)[:], (*otherEd)[:])
-	} else {
-		return false
+		otherArrayPtr := otherEd.arrayPtr()
+		return bytes.Equal((*keyArrayPtr)[:], (*otherArrayPtr)[:])
 	}
-}
-
-func (privKey *PrivKeyEd25519) KeyString() string {
-	return Fmt("%X", (*privKey)[:])
+	return false
 }
 
 func (privKey *PrivKeyEd25519) ToCurve25519() *[32]byte {
 	keyCurve25519 := new([32]byte)
-	privKeyBytes := [64]byte(*privKey)
-	extra25519.PrivateKeyToCurve25519(keyCurve25519, &privKeyBytes)
+	extra25519.PrivateKeyToCurve25519(keyCurve25519, privKey.arrayPtr())
 	return keyCurve25519
 }
 
@@ -132,15 +202,23 @@ func (privKey *PrivKeyEd25519) String() string {
 }
 
 func (privKey *PrivKeyEd25519) MarshalJSON() ([]byte, error) {
-	hstr := strings.ToUpper(hex.EncodeToString((*privKey)[:64]))
+	encBytes := privKey.encrypted
+	if len(encBytes) == 0 {
+		// not encrypted
+		pkPtr := privKey.arrayPtr()
+		encBytes = (*pkPtr)[:]
+	}
+	hstr := strings.ToUpper(hex.EncodeToString(encBytes))
 	return json.Marshal([]interface{}{
 		PrivKeyTypeEd25519, hstr,
 	})
 }
 
+// after unmarshal, should call Decrypt() to init the key
 func (privKey *PrivKeyEd25519) UnmarshalJSON(data []byte) error {
 	var dec []interface{}
-	if err := json.Unmarshal(data, &dec); err != nil {
+	err := json.Unmarshal(data, &dec)
+	if err != nil {
 		return err
 	}
 	if len(dec) < 2 {
@@ -150,45 +228,112 @@ func (privKey *PrivKeyEd25519) UnmarshalJSON(data []byte) error {
 		return errors.New("wrong marshal result for PrivKeyTypeEd25519")
 	}
 	hstr := dec[1].(string)
-	bytes, err := hex.DecodeString(hstr)
-	if err != nil {
-		return err
-	}
-	if len(bytes) < 64 {
-		return errors.New("bytes shorter than 64")
-	}
-	copy((*privKey)[:64], bytes[:64])
-	return nil
+	privKey.encrypted, err = hex.DecodeString(hstr)
+	return err
 }
 
-func GenPrivKeyEd25519() PrivKeyEd25519 {
-	privKeyBytes := new([64]byte)
+func (privKey *PrivKeyEd25519) Destroy() {
+	privKey.mg.Destroy()
+}
+
+func GenPrivKeyEd25519(pwd []byte) (*PrivKeyEd25519, error) {
+	var privKeyBytes PrivKeyEd25519Arr
 	copy(privKeyBytes[:32], CRandBytes(32))
-	ed25519.MakePublicKey(privKeyBytes)
-	return PrivKeyEd25519(*privKeyBytes)
+	ed25519.GenPublicKey(&privKeyBytes)
+	privKey := &PrivKeyEd25519{}
+	err := privKey.InitAndEncrypt(&privKeyBytes, pwd)
+	if err != nil {
+		privKey = nil
+	}
+	return privKey, err
 }
 
 // NOTE: secret should be the output of a KDF like bcrypt,
 // if it's derived from user input.
-func GenPrivKeyEd25519FromSecret(secret []byte) PrivKeyEd25519 {
+func GenPrivKeyEd25519FromSecret(secret, pwd []byte) (*PrivKeyEd25519, error) {
 	privKey32 := Sha256(secret) // Not Ripemd160 because we want 32 bytes.
-	privKeyBytes := new([64]byte)
+	var privKeyBytes PrivKeyEd25519Arr
 	copy(privKeyBytes[:32], privKey32)
-	ed25519.MakePublicKey(privKeyBytes)
-	return PrivKeyEd25519(*privKeyBytes)
+	ed25519.GenPublicKey(&privKeyBytes)
+	privKey := &PrivKeyEd25519{}
+	err := privKey.InitAndEncrypt(&privKeyBytes, pwd)
+	if err != nil {
+		privKey = nil
+	}
+	return privKey, err
+}
+
+func EncryptSlcToEd25519(privKey, pwd []byte) (*PrivKeyEd25519, error) {
+	var privArr PrivKeyEd25519Arr
+	copy(privArr[:], privKey)
+	libcrypto.WipeBytes(privKey)
+	privKeyEd := &PrivKeyEd25519{}
+	err := privKeyEd.InitAndEncrypt(&privArr, pwd)
+	if err != nil {
+		privKeyEd = nil
+	}
+	return privKeyEd, err
+}
+
+func DecryptSlcToEd25519(encrypted, pwd []byte) (*PrivKeyEd25519, error) {
+	privKeyEd := &PrivKeyEd25519{}
+	err := privKeyEd.InitAndDecrypt(encrypted, pwd)
+	if err != nil {
+		privKeyEd = nil
+	}
+	return privKeyEd, err
 }
 
 //-------------------------------------
 
-// Implements PrivKey
-type PrivKeySecp256k1 [32]byte
+type PrivKeySecp256k1Arr = [32]byte
 
-func (privKey *PrivKeySecp256k1) Bytes() []byte {
-	return (*privKey)[:]
+// Implements PrivKey
+type PrivKeySecp256k1 struct {
+	//[32]byte
+	encrypted []byte
+	mg        *memguard.LockedBuffer
+}
+
+func (privKey *PrivKeySecp256k1) InitAndEncrypt(pkArr *PrivKeySecp256k1Arr, pwd []byte) error {
+	var err error
+	if len(pwd) != 0 {
+		privKey.encrypted, err = libcrypto.Encrypt((*pkArr)[:], pwd)
+		libcrypto.WipeBytes(pwd)
+		if err != nil {
+			return err
+		}
+	} else {
+		privKey.encrypted = []byte{}
+	}
+	// pkBytes will be wiped by memguard
+	if privKey.mg != nil && !privKey.mg.IsDestroyed() {
+		privKey.mg.Destroy()
+	}
+	privKey.mg, err = memguard.NewImmutableFromBytes((*pkArr)[:])
+	return err
+}
+
+func (privKey *PrivKeySecp256k1) Decrypt(pwd []byte) error {
+	pkBytes, err := libcrypto.Decrypt(privKey.encrypted, pwd)
+	if err != nil {
+		return err
+	}
+	var pkArr PrivKeySecp256k1Arr
+	copy(pkArr[:], pkBytes)
+	// pkBytes will be wiped by memguard
+	privKey.mg, err = memguard.NewImmutableFromBytes(pkArr[:])
+	libcrypto.WipeBytes(pwd)
+	return err
+}
+
+func (privKey *PrivKeySecp256k1) arrayPtr() *PrivKeySecp256k1Arr {
+	return (*PrivKeySecp256k1Arr)(unsafe.Pointer(&privKey.mg.Buffer()[0]))
 }
 
 func (privKey *PrivKeySecp256k1) Sign(msg []byte) Signature {
-	priv__, _ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), (*privKey)[:])
+	keyArrayPtr := privKey.arrayPtr()
+	priv__, _ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), (*keyArrayPtr)[:])
 	sig__, err := priv__.Sign(Sha256(msg))
 	if err != nil {
 		PanicSanity(err)
@@ -198,7 +343,8 @@ func (privKey *PrivKeySecp256k1) Sign(msg []byte) Signature {
 }
 
 func (privKey *PrivKeySecp256k1) PubKey() PubKey {
-	_, pub__ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), (*privKey)[:])
+	keyArrayPtr := privKey.arrayPtr()
+	_, pub__ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), (*keyArrayPtr)[:])
 	pub := [64]byte{}
 	copy(pub[:], pub__.SerializeUncompressed()[1:])
 	pubkey := PubKeySecp256k1(pub)
@@ -206,8 +352,10 @@ func (privKey *PrivKeySecp256k1) PubKey() PubKey {
 }
 
 func (privKey *PrivKeySecp256k1) Equals(other PrivKey) bool {
+	keyArrayPtr := privKey.arrayPtr()
 	if otherSecp, ok := other.(*PrivKeySecp256k1); ok {
-		return bytes.Equal((*privKey)[:], (*otherSecp)[:])
+		otherArrayPtr := otherSecp.arrayPtr()
+		return bytes.Equal((*keyArrayPtr)[:], (*otherArrayPtr)[:])
 	}
 	return false
 }
@@ -216,12 +364,8 @@ func (privKey *PrivKeySecp256k1) String() string {
 	return Fmt("PrivKeySecp256k1{*****}")
 }
 
-func (privKey *PrivKeySecp256k1) KeyString() string {
-	return Fmt("%X", (*privKey)[:])
-}
-
 func (privKey *PrivKeySecp256k1) MarshalJSON() ([]byte, error) {
-	hstr := strings.ToUpper(hex.EncodeToString((*privKey)[:32]))
+	hstr := strings.ToUpper(hex.EncodeToString(privKey.encrypted))
 	return json.Marshal([]interface{}{
 		PrivKeyTypeSecp256k1, hstr,
 	})
@@ -229,7 +373,8 @@ func (privKey *PrivKeySecp256k1) MarshalJSON() ([]byte, error) {
 
 func (privKey *PrivKeySecp256k1) UnmarshalJSON(data []byte) error {
 	var dec []interface{}
-	if err := json.Unmarshal(data, &dec); err != nil {
+	err := json.Unmarshal(data, &dec)
+	if err != nil {
 		return err
 	}
 	if len(dec) < 2 {
@@ -239,31 +384,32 @@ func (privKey *PrivKeySecp256k1) UnmarshalJSON(data []byte) error {
 		return errors.New("wrong marshal result for PrivKeyTypeSecp256k1")
 	}
 	hstr := dec[1].(string)
-	bytes, err := hex.DecodeString(hstr)
-	if err != nil {
-		return err
-	}
-	if len(bytes) < 32 {
-		return errors.New("bytes shorter than 64")
-	}
-	copy((*privKey)[:32], bytes[:32])
-	return nil
+	privKey.encrypted, err = hex.DecodeString(hstr)
+	return err
 }
 
-func GenPrivKeySecp256k1() PrivKeySecp256k1 {
-	privKeyBytes := [32]byte{}
+func (privKey *PrivKeySecp256k1) Destroy() {
+	privKey.mg.Destroy()
+}
+
+func GenPrivKeySecp256k1(pwd []byte) *PrivKeySecp256k1 {
+	var privKeyBytes PrivKeySecp256k1Arr
 	copy(privKeyBytes[:], CRandBytes(32))
 	priv, _ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), privKeyBytes[:])
 	copy(privKeyBytes[:], priv.Serialize())
-	return PrivKeySecp256k1(privKeyBytes)
+	privKey := &PrivKeySecp256k1{}
+	privKey.InitAndEncrypt(&privKeyBytes, pwd)
+	return privKey
 }
 
 // NOTE: secret should be the output of a KDF like bcrypt,
 // if it's derived from user input.
-func GenPrivKeySecp256k1FromSecret(secret []byte) PrivKeySecp256k1 {
+func GenPrivKeySecp256k1FromSecret(secret, pwd []byte) *PrivKeySecp256k1 {
 	privKey32 := Sha256(secret) // Not Ripemd160 because we want 32 bytes.
 	priv, _ := secp256k1.PrivKeyFromBytes(secp256k1.S256(), privKey32)
-	privKeyBytes := [32]byte{}
+	var privKeyBytes PrivKeySecp256k1Arr
 	copy(privKeyBytes[:], priv.Serialize())
-	return PrivKeySecp256k1(privKeyBytes)
+	privKey := &PrivKeySecp256k1{}
+	privKey.InitAndEncrypt(&privKeyBytes, pwd)
+	return privKey
 }

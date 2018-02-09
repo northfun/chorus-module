@@ -46,9 +46,11 @@ func makeDummyConnPair() (fooConn, barConn dummyConn) {
 
 func makeSecretConnPair(tb testing.TB) (fooSecConn, barSecConn *SecretConnection) {
 	fooConn, barConn := makeDummyConnPair()
-	fooPrvKey := crypto.GenPrivKeyEd25519()
+	fooPrvKey := crypto.GenPrivKeyEd25519(nil)
+	defer fooPrvKey.Destroy()
 	fooPubKey := fooPrvKey.PubKey().(*crypto.PubKeyEd25519)
-	barPrvKey := crypto.GenPrivKeyEd25519()
+	barPrvKey := crypto.GenPrivKeyEd25519(nil)
+	defer barPrvKey.Destroy()
 	barPubKey := barPrvKey.PubKey().(*crypto.PubKeyEd25519)
 
 	Parallel(
@@ -103,7 +105,8 @@ func TestSecretConnectionReadWrite(t *testing.T) {
 	genNodeRunner := func(nodeConn dummyConn, nodeWrites []string, nodeReads *[]string) func() {
 		return func() {
 			// Node handskae
-			nodePrvKey := crypto.GenPrivKeyEd25519()
+			nodePrvKey := crypto.GenPrivKeyEd25519(nil)
+			defer nodePrvKey.Destroy()
 			nodeSecretConn, err := MakeSecretConnection(nodeConn, nodePrvKey)
 			if err != nil {
 				t.Errorf("Failed to establish SecretConnection for node: %v", err)

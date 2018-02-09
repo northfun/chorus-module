@@ -2,10 +2,8 @@ package xlib
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"testing"
-
-	"github.com/Baptist-Publication/chorus-module/lib/ed25519"
-	crypto "github.com/Baptist-Publication/chorus-module/lib/go-crypto"
 )
 
 func TestSortInt64Slc(t *testing.T) {
@@ -21,13 +19,18 @@ func TestSortInt64Slc(t *testing.T) {
 	}
 }
 
-func TestSerialBytes(t *testing.T) {
-	privKeyBytes := new([64]byte)
-	copy(privKeyBytes[:32], crypto.CRandBytes(32))
-	pubKeyBytes := ed25519.MakePublicKey(privKeyBytes)
-	set := (*pubKeyBytes)[:]
+func randBytes(size int) []byte {
+	b := make([]byte, size)
+	_, err := crand.Read(b)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func checkSerialBytes(t *testing.T, bys []byte) {
 	var wbuffer bytes.Buffer
-	if err := WriteBytes(&wbuffer, set); err != nil {
+	if err := WriteBytes(&wbuffer, bys); err != nil {
 		t.Error("writeBytes err:", err)
 		return
 	}
@@ -39,8 +42,22 @@ func TestSerialBytes(t *testing.T) {
 		t.Error("readBytes err:", err)
 		return
 	}
-	//fmt.Printf("origin:%X\nwrite bytes:%X\nre-read bytes:%X\n", set, wbys, ret)
-	if string(ret) != string(set) {
+	//fmt.Printf("origin:%X\nwrite bytes:%X\nre-read bytes:%X\n", bys, wbys, ret)
+	if string(ret) != string(bys) {
 		t.Error("read error, not equal")
 	}
+}
+
+func TestSerialBytes(t *testing.T) {
+	slc0 := randBytes(0)
+	checkSerialBytes(t, slc0)
+
+	slc32 := randBytes(32)
+	checkSerialBytes(t, slc32)
+
+	slc64 := randBytes(64)
+	checkSerialBytes(t, slc64)
+
+	slc128 := randBytes(128)
+	checkSerialBytes(t, slc128)
 }
