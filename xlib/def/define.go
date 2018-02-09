@@ -1,8 +1,6 @@
 package def
 
 const (
-	ChangeAddressSerialHeight = 15000
-
 	ElectionFrequency = 500
 )
 
